@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>360 PANORAMA VIEWER</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #030712;
+            color: #f3f4f6;
+            touch-action: none;
+        }
+
+        #viewer-canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+
+        /* Glassmorphism styling */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.78);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        /* Auto-Disappearing & Blur Overlay HUD */
+        .hud-overlay {
+            transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), filter 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            opacity: 1;
+            filter: blur(0px);
+            pointer-events: auto;
+        }
+
+        .hud-idle {
+            opacity: 0.15;
+            filter: blur(4px);
+            pointer-events: none;
+        }
+
+        .hud-idle:hover {
+            opacity: 1;
+            filter: blur(0px);
+            pointer-events: auto;
+        }
+
+        /* Custom scrollbar for gallery drawer */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.5);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.8);
+        }
+
+        /* VR Mode Split Screen Line */
+        .vr-divider {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            width: 3px;
+            background: rgba(99, 102, 241, 0.6);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.8);
+            z-index: 5;
+            transform: translateX(-50%);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="h-full w-full select-none relative overflow-hidden">
+
+    <div id="canvas-container" class="absolute inset-0 z-0"></div>
+
+    <!-- VR Split Screen Center Line Indicator (Visible in Opposite-Angle VR Mode) -->
+    <div id="vr-divider" class="vr-divider hidden"></div>
+
+    <!-- Top Navigation Header Bar -->
+    <header id="top-hud" class="hud-overlay fixed top-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between p-3 rounded-2xl glass-panel shadow-2xl gap-2">
+        <!-- Logo & Branding -->
+        <div class="flex items-center space-x-3">
+            <div class="bg-gradient-to-tr from-indigo-600 to-violet-500 text-white p-2.5 rounded-xl shadow-lg flex items-center justify-center">
+                <i class="fa-solid fa-compass text-lg animate-pulse"></i>
+            </div>
+            <div>
+                <h1 class="text-sm font-extrabold tracking-wide text-white uppercase flex items-center gap-2">
+                    360 PANORAMA VIEWER
+                    <span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-500/30">Offline</span>
+                </h1>
+                <p id="current-media-name" class="text-xs text-slate-400 truncate max-w-[180px] sm:max-w-xs">
+                    Digital Grid (Powered by MABJAS)
+                </p>
+            </div>
+        </div>
+
+        <!-- Action Tools -->
+        <div class="flex items-center space-x-2">
+            <!-- View Mode Switcher (Opposite Angle VR) -->
+            <button id="btn-toggle-vr" title="Toggle Opposite-Angle 180° VR Side-by-Side Mode" class="bg-slate-800/80 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-95">
+                <i id="vr-icon" class="fa-solid fa-vr-cardboard text-indigo-400"></i>
+                <span id="vr-label" class="hidden sm:inline">360° Mono</span>
+            </button>
+
+            <!-- Mobile Orientation Helper -->
+            <button id="btn-orientation" title="Switch Orientation / Aspect Ratio" class="bg-slate-800/80 hover:bg-slate-700 text-slate-200 p-2.5 rounded-xl border border-slate-700 text-xs transition-all active:scale-95">
+                <i id="orientation-icon" class="fa-solid fa-mobile-screen text-slate-300"></i>
+            </button>
+
+            <!-- Bulk Media Upload Button (Images & Videos) -->
+            <label class="cursor-pointer bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-md transition-all flex items-center gap-2 active:scale-95">
+                <i class="fa-solid fa-folder-plus"></i>
+                <span class="hidden md:inline">Bulk Add Media</span>
+                <input type="file" id="bulk-upload" accept="image/*,video/*" multiple class="hidden">
+            </label>
+
+            <!-- Open Gallery Drawer Button -->
+            <button id="btn-toggle-gallery" title="Library & Presets" class="bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-500/30 p-2.5 rounded-xl text-xs transition-all active:scale-95 relative">
+                <i class="fa-solid fa-images"></i>
+                <span id="gallery-count-badge" class="absolute -top-1.5 -right-1.5 bg-indigo-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center border border-slate-900">3</span>
+            </button>
+
+            <!-- Fullscreen -->
+            <button id="btn-fullscreen" title="Fullscreen View" class="bg-slate-800/80 hover:bg-slate-700 text-slate-200 p-2.5 rounded-xl border border-slate-700 text-xs transition-all active:scale-95">
+                <i class="fa-solid fa-expand"></i>
+            </button>
+        </div>
+    </header>
+
+    <div id="degree-hud" class="hud-overlay fixed top-20 left-3 z-10 glass-panel px-3.5 py-2 rounded-xl border border-slate-800 text-[11px] font-mono text-slate-300 flex items-center space-x-3 shadow-lg pointer-events-none">
+        <div class="flex items-center space-x-1" title="Horizontal Azimuth Angle">
+            <span class="text-slate-500">AZ:</span>
+            <span id="hud-azimuth" class="text-indigo-400 font-bold">0.0°</span>
+        </div>
+        <div class="w-px h-3 bg-slate-700"></div>
+        <div class="flex items-center space-x-1" title="Vertical Altitude Angle">
+            <span class="text-slate-500">ALT:</span>
+            <span id="hud-altitude" class="text-indigo-400 font-bold">0.0°</span>
+        </div>
+        <div class="w-px h-3 bg-slate-700"></div>
+        <div class="flex items-center space-x-1" title="Field Of View">
+            <span class="text-slate-500">FOV:</span>
+            <span id="hud-fov" class="text-emerald-400 font-bold">75°</span>
+        </div>
+    </div>
+
+    <!-- Hidden Video Element for 360 Video Playback -->
+    <video id="source-video" crossorigin="anonymous" playsinline webkit-playsinline loop class="hidden"></video>
+
+    <div id="bottom-hud" class="hud-overlay fixed bottom-5 left-1/2 transform -translate-x-1/2 z-20 flex flex-wrap items-center justify-center gap-2 p-2.5 rounded-2xl glass-panel shadow-2xl max-w-2xl w-[94%] sm:w-auto">
+        
+        <!-- Video Playback Controls (Visible only when a 360 video is loaded) -->
+        <div id="video-controls-bar" class="hidden items-center space-x-2 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-indigo-500/30">
+            <button id="btn-video-play" title="Play / Pause Video" class="text-indigo-400 hover:text-indigo-300 p-1 text-sm">
+                <i id="video-play-icon" class="fa-solid fa-play"></i>
+            </button>
+            <input type="range" id="video-seekbar" min="0" max="100" value="0" step="0.1" class="w-24 sm:w-32 accent-indigo-500 cursor-pointer">
+            <span id="video-time-display" class="text-[10px] font-mono text-slate-300">00:00 / 00:00</span>
+        </div>
+
+        <!-- Auto-Rotate Toggle & Speed Slider -->
+        <div class="flex items-center space-x-2 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800">
+            <button id="btn-autorotate" title="Toggle Auto Rotation" class="text-slate-300 hover:text-white p-1">
+                <i id="autorotate-icon" class="fa-solid fa-play text-xs"></i>
+            </button>
+            <span class="text-[11px] text-slate-400 font-medium">Auto</span>
+            <input type="range" id="speed-slider" min="-0.015" max="0.015" step="0.001" value="0.003" title="Rotation Speed & Direction" class="w-14 sm:w-20 accent-indigo-500 cursor-pointer">
+        </div>
+
+        <!-- Zoom Controls -->
+        <div class="flex items-center space-x-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+            <button id="btn-zoom-out" title="Zoom Out" class="hover:bg-slate-800 text-slate-300 p-1.5 rounded-lg text-xs transition-all">
+                <i class="fa-solid fa-magnifying-glass-minus"></i>
+            </button>
+            <button id="btn-zoom-in" title="Zoom In" class="hover:bg-slate-800 text-slate-300 p-1.5 rounded-lg text-xs transition-all">
+                <i class="fa-solid fa-magnifying-glass-plus"></i>
+            </button>
+        </div>
+
+        <!-- Reset / Clear Buttons -->
+        <div class="flex items-center space-x-1">
+            <button id="btn-reset-view" title="Reset Camera Angle" class="bg-slate-800/80 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-medium border border-slate-700 transition-all flex items-center space-x-1.5 active:scale-95">
+                <i class="fa-solid fa-compass"></i>
+                <span class="hidden sm:inline">Reset</span>
+            </button>
+
+            <button id="btn-clear-canvas" title="Clear Canvas View" class="bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 px-3 py-1.5 rounded-xl text-xs font-medium border border-rose-500/30 transition-all flex items-center space-x-1.5 active:scale-95">
+                <i class="fa-solid fa-trash-can"></i>
+                <span>Clear</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="gallery-drawer" class="fixed inset-y-0 right-0 z-30 w-80 max-w-full glass-panel shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col border-l border-slate-800">
+        <!-- Drawer Header -->
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-photo-film text-indigo-400"></i>
+                <h2 class="font-bold text-sm text-white">360 Library & Presets</h2>
+            </div>
+            <button id="btn-close-gallery" class="text-slate-400 hover:text-white p-1 rounded-lg">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+
+        <!-- List Items Container -->
+        <div id="gallery-list" class="flex-1 overflow-y-auto p-3 space-y-2.5">
+            <!-- Dynamic Items rendered here -->
+        </div>
+
+        <!-- Drawer Footer Controls -->
+        <div class="p-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between gap-2">
+            <span class="text-[11px] text-slate-500">IndexedDB Offline Storage</span>
+            <button id="btn-clear-stored" class="text-xs text-rose-400 hover:text-rose-300 hover:underline">
+                Clear All Uploads
+            </button>
+        </div>
+    </div>
+
+    <!-- Drag & Drop Overlay Zone -->
+    <div id="drop-zone" class="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="border-2 border-dashed border-indigo-500/60 bg-indigo-950/30 p-10 rounded-3xl text-center max-w-md w-full shadow-2xl mx-4">
+            <div class="bg-indigo-600/20 text-indigo-400 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl border border-indigo-500/30">
+                <i class="fa-solid fa-file-arrow-up animate-bounce"></i>
+            </div>
+            <h3 class="text-base font-bold text-white mb-1">Drop 2:1 Panoramas or 360 Videos</h3>
+            <p class="text-xs text-slate-400 mb-4">Saved in IndexedDB automatically for complete offline accessibility.</p>
+            <span class="text-xs bg-indigo-600 text-white px-4 py-2 rounded-xl font-medium shadow-md">Release to add to library</span>
+        </div>
+    </div>
+
+    <script>
+        // Core Three.js Variables
+        let camera, scene, renderer, sphereMesh, leftCamera, rightCamera;
+        let isVRMode = false;
+        let isUserInteracting = false;
+        let onPointerDownMouseX = 0, onPointerDownMouseY = 0;
+        let lon = 0, onPointerDownLon = 0;
+        let lat = 0, onPointerDownLat = 0;
+        let phi = 0, theta = 0;
+        let autoRotate = false;
+        let autoRotateSpeed = 0.003;
+        let targetFOV = 75;
+
+        // Video playback variables
+        let videoElement = null;
+        let videoTexture = null;
+        let isVideoPlaying = false;
+
+        // Auto-Disappearing Overlay Controls
+        let idleTimer = null;
+        const IDLE_DELAY = 2500; // 2.5s idle threshold
+
+        // Local Storage / IndexedDB Database
+        const DB_NAME = '360PanoramaViewerDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'user_panoramas';
+        let db = null;
+
+        // Active Panoramic Library Items
+        let panoramaLibrary = [
+            {
+                id: 'preset-grid',
+                name: 'Digital Grid (Powered by MABJAS)',
+                type: 'preset',
+                mediaType: 'image',
+                generator: createDigitalGridTexture
+            },
+            {
+                id: 'preset-sunset',
+                name: 'Sunset Horizon (Stock 2:1)',
+                type: 'preset',
+                mediaType: 'image',
+                generator: createSunsetHorizonTexture
+            },
+            {
+                id: 'preset-aurora',
+                name: 'Northern Lights (Stock 2:1)',
+                type: 'preset',
+                mediaType: 'image',
+                generator: createNorthernLightsTexture
+            }
+        ];
+
+        let currentActiveId = 'preset-grid';
+
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                request.onupgradeneeded = (e) => {
+                    const dbInstance = e.target.result;
+                    if (!dbInstance.objectStoreNames.contains(STORE_NAME)) {
+                        dbInstance.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = (e) => {
+                    db = e.target.result;
+                    loadStoredUserMedia().then(resolve);
+                };
+                request.onerror = (e) => {
+                    console.error('IndexedDB Error:', e);
+                    resolve();
+                };
+            });
+        }
+
+        function saveMediaToDB(item) {
+            if (!db) return;
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            store.put(item);
+        }
+
+        function deleteMediaFromDB(id) {
+            if (!db) return;
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            store.delete(id);
+        }
+
+        function loadStoredUserMedia() {
+            return new Promise((resolve) => {
+                if (!db) return resolve();
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.getAll();
+                req.onsuccess = () => {
+                    const savedItems = req.result || [];
+                    savedItems.forEach(item => {
+                        panoramaLibrary.push({
+                            id: item.id,
+                            name: item.name,
+                            type: 'user',
+                            mediaType: item.mediaType || 'image',
+                            dataUrl: item.dataUrl
+                        });
+                    });
+                    resolve();
+                };
+                req.onerror = () => resolve();
+            });
+        }
+
+        // --- PERFECT SEAMLESS EQUIRECTANGULAR TEXTURE GENERATORS ---
+
+        // 1. Digital Grid (Powered by MABJAS) with perfect wrapping
+        function createDigitalGridTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2048;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+
+            const grad = ctx.createLinearGradient(0, 0, 0, 1024);
+            grad.addColorStop(0, '#0f172a');
+            grad.addColorStop(0.5, '#020617');
+            grad.addColorStop(1, '#0f172a');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 2048, 1024);
+
+            ctx.strokeStyle = 'rgba(99, 102, 241, 0.25)';
+            ctx.lineWidth = 2;
+
+            const stepX = 2048 / 36;
+            const stepY = 1024 / 18;
+
+            for (let x = 0; x <= 2048; x += stepX) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, 1024);
+                ctx.stroke();
+            }
+
+            for (let y = 0; y <= 1024; y += stepY) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(2048, y);
+                ctx.stroke();
+            }
+
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, 512);
+            ctx.lineTo(2048, 512);
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 56px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('360 PANORAMA VIEWER', 1024, 460);
+
+            ctx.fillStyle = '#818cf8';
+            ctx.font = 'bold 36px system-ui, sans-serif';
+            ctx.fillText('Powered by MABJAS', 1024, 570);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            return texture;
+        }
+
+        // 2. Sunset Horizon - Seamless Equirectangular Generator (Zero Seam Artifacts)
+        function createSunsetHorizonTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2048;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+
+            // Sky & Ocean Gradient
+            const grad = ctx.createLinearGradient(0, 0, 0, 1024);
+            grad.addColorStop(0.0, '#1e1b4b');
+            grad.addColorStop(0.3, '#7c2d12');
+            grad.addColorStop(0.48, '#f97316');
+            grad.addColorStop(0.50, '#fdba74');
+            grad.addColorStop(0.52, '#0f172a');
+            grad.addColorStop(1.0, '#020617');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 2048, 1024);
+
+            // Sun Glow at Center
+            const sunGrad = ctx.createRadialGradient(1024, 490, 10, 1024, 490, 500);
+            sunGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+            sunGrad.addColorStop(0.25, 'rgba(254, 215, 170, 0.7)');
+            sunGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+            ctx.fillStyle = sunGrad;
+            ctx.fillRect(0, 0, 2048, 1024);
+
+            // Symmetrical Cloud bands wrapping 0 and 2048 perfectly
+            ctx.fillStyle = 'rgba(254, 215, 170, 0.14)';
+            for (let i = 0; i < 8; i++) {
+                const cx = 256 * i + 128;
+                const cy = 180 + (i % 3) * 60;
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, 320, 35, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Wrap copy for exact edge continuity
+                ctx.ellipse(cx + 2048, cy, 320, 35, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Mountain Silhouettes (Completely closed and periodic at x=0 and x=2048)
+            ctx.fillStyle = '#070b14';
+            ctx.beginPath();
+            ctx.moveTo(0, 1024);
+            ctx.lineTo(0, 512);
+            for (let x = 0; x <= 2048; x += 8) {
+                const angle = (x / 2048) * Math.PI * 2;
+                // Harmonic sum for smooth rolling hills that match at ends
+                const h = Math.sin(angle * 3) * 45 + Math.cos(angle * 6) * 25 + Math.sin(angle * 9) * 12;
+                ctx.lineTo(x, 512 - Math.max(10, h));
+            }
+            ctx.lineTo(2048, 1024);
+            ctx.closePath();
+            ctx.fill();
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            return texture;
+        }
+
+        // 3. Northern Lights - Seamless Equirectangular Generator
+        function createNorthernLightsTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2048;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+
+            const grad = ctx.createLinearGradient(0, 0, 0, 1024);
+            grad.addColorStop(0.0, '#020617');
+            grad.addColorStop(0.4, '#064e3b');
+            grad.addColorStop(0.5, '#022c22');
+            grad.addColorStop(0.52, '#020617');
+            grad.addColorStop(1.0, '#000000');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 2048, 1024);
+
+            // Stars
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 350; i++) {
+                const sx = Math.random() * 2048;
+                const sy = Math.random() * 480;
+                const r = Math.random() * 1.4;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Periodic Aurora Ribbon matching perfectly at 0 and 2048
+            for (let wave = 0; wave < 3; wave++) {
+                ctx.beginPath();
+                ctx.fillStyle = wave === 0 ? 'rgba(34, 197, 94, 0.28)' : 'rgba(168, 85, 247, 0.22)';
+                ctx.moveTo(0, 512);
+                for (let x = 0; x <= 2048; x += 10) {
+                    const normX = (x / 2048) * Math.PI * 2;
+                    const y = 240 + Math.sin(normX * (2 + wave)) * 90 + Math.cos(normX * 5) * 35;
+                    ctx.lineTo(x, y);
+                }
+                ctx.lineTo(2048, 512);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Snowy Terrain
+            ctx.fillStyle = '#090d16';
+            ctx.beginPath();
+            ctx.moveTo(0, 1024);
+            ctx.lineTo(0, 512);
+            for (let x = 0; x <= 2048; x += 8) {
+                const normX = (x / 2048) * Math.PI * 2;
+                const h = Math.abs(Math.sin(normX * 4)) * 65 + Math.cos(normX * 8) * 18;
+                ctx.lineTo(x, 512 - h);
+            }
+            ctx.lineTo(2048, 1024);
+            ctx.closePath();
+            ctx.fill();
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            return texture;
+        }
+
+        // --- STREAMING_CHUNK:Initializing Three.js Viewport & Dual Cameras ---
+        function initThreeViewer() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+
+            // Main Camera (Mono View)
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1100);
+            camera.target = new THREE.Vector3(0, 0, 0);
+
+            // Left & Right Cameras for Opposite-Angle VR Mode
+            leftCamera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 1, 1100);
+            rightCamera = new THREE.PerspectiveCamera(75, (window.innerWidth / 2) / window.innerHeight, 1, 1100);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            // Inside-out Sphere Geometry
+            const geometry = new THREE.SphereGeometry(500, 60, 40);
+            geometry.scale(-1, 1, 1);
+
+            const initialTexture = createDigitalGridTexture();
+            const material = new THREE.MeshBasicMaterial({ map: initialTexture });
+
+            sphereMesh = new THREE.Mesh(geometry, material);
+            scene.add(sphereMesh);
+
+            videoElement = document.getElementById('source-video');
+
+            // Event Listeners
+            const domElem = renderer.domElement;
+            domElem.addEventListener('pointerdown', onPointerDown);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            domElem.addEventListener('wheel', onDocumentMouseWheel, { passive: false });
+
+            domElem.addEventListener('touchstart', onTouchStart, { passive: false });
+            domElem.addEventListener('touchmove', onTouchMove, { passive: false });
+
+            window.addEventListener('resize', onWindowResize);
+
+            ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(evt => {
+                window.addEventListener(evt, resetIdleTimer, { passive: true });
+            });
+
+            resetIdleTimer();
+            animate();
+        }
+
+        let touchStartDist = 0;
+
+        function onPointerDown(e) {
+            if (e.isPrimary === false) return;
+            isUserInteracting = true;
+            onPointerDownMouseX = e.clientX;
+            onPointerDownMouseY = e.clientY;
+            onPointerDownLon = lon;
+            onPointerDownLat = lat;
+            resetIdleTimer();
+        }
+
+        function onPointerMove(e) {
+            if (e.isPrimary === false) return;
+            if (isUserInteracting === true) {
+                lon = (onPointerDownMouseX - e.clientX) * 0.18 + onPointerDownLon;
+                lat = (e.clientY - onPointerDownMouseY) * 0.18 + onPointerDownLat;
+            }
+        }
+
+        function onPointerUp() {
+            isUserInteracting = false;
+        }
+
+        function onDocumentMouseWheel(e) {
+            e.preventDefault();
+            targetFOV += e.deltaY * 0.05;
+            targetFOV = THREE.MathUtils.clamp(targetFOV, 25, 105);
+        }
+
+        function onTouchStart(e) {
+            if (e.touches.length === 1) {
+                isUserInteracting = true;
+                onPointerDownMouseX = e.touches[0].clientX;
+                onPointerDownMouseY = e.touches[0].clientY;
+                onPointerDownLon = lon;
+                onPointerDownLat = lat;
+            } else if (e.touches.length === 2) {
+                touchStartDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+            }
+        }
+
+        function onTouchMove(e) {
+            if (e.touches.length === 1 && isUserInteracting) {
+                lon = (onPointerDownMouseX - e.touches[0].clientX) * 0.18 + onPointerDownLon;
+                lat = (e.touches[0].clientY - onPointerDownMouseY) * 0.18 + onPointerDownLat;
+            } else if (e.touches.length === 2) {
+                const currentDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                const delta = touchStartDist - currentDist;
+                targetFOV += delta * 0.08;
+                targetFOV = THREE.MathUtils.clamp(targetFOV, 25, 105);
+                touchStartDist = currentDist;
+            }
+        }
+
+        function onWindowResize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+
+            leftCamera.aspect = (width / 2) / height;
+            leftCamera.updateProjectionMatrix();
+
+            rightCamera.aspect = (width / 2) / height;
+            rightCamera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+        }
+
+        // --- STREAMING_CHUNK:Running Main Animation & Opposite-Angle VR Rendering Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+        }
+
+        function update() {
+            if (autoRotate && !isUserInteracting) {
+                lon += autoRotateSpeed * 50;
+            }
+
+            lon = (lon % 360 + 360) % 360;
+            lat = Math.max(-85, Math.min(85, lat));
+
+            phi = THREE.MathUtils.degToRad(90 - lat);
+            theta = THREE.MathUtils.degToRad(lon);
+
+            camera.fov += (targetFOV - camera.fov) * 0.1;
+            camera.updateProjectionMatrix();
+
+            leftCamera.fov = camera.fov;
+            leftCamera.updateProjectionMatrix();
+            rightCamera.fov = camera.fov;
+            rightCamera.updateProjectionMatrix();
+
+            // Main camera look direction vector
+            const target = new THREE.Vector3();
+            target.x = 500 * Math.sin(phi) * Math.cos(theta);
+            target.y = 500 * Math.cos(phi);
+            target.z = 500 * Math.sin(phi) * Math.sin(theta);
+
+            camera.lookAt(target);
+
+            // Update video texture if video is playing
+            if (videoTexture && videoElement.readyState >= videoElement.HAVE_CURRENT_DATA) {
+                videoTexture.needsUpdate = true;
+            }
+
+            // Render based on active view mode
+            if (!isVRMode) {
+                renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+                renderer.setScissorTest(false);
+                renderer.render(scene, camera);
+            } else {
+                const w = window.innerWidth / 2;
+                const h = window.innerHeight;
+
+                renderer.setScissorTest(true);
+
+                // LEFT VIEWPORT: User Main Azimuth (e.g. North)
+                renderer.setViewport(0, 0, w, h);
+                renderer.setScissor(0, 0, w, h);
+                leftCamera.position.copy(camera.position);
+                leftCamera.quaternion.copy(camera.quaternion);
+                renderer.render(scene, leftCamera);
+
+                // RIGHT VIEWPORT: OPPOSITE ANGLE (+180° Azimuth Shift, e.g. South)
+                renderer.setViewport(w, 0, w, h);
+                renderer.setScissor(w, 0, w, h);
+                
+                const oppositeTheta = theta + Math.PI; // 180 degree offset
+                const oppositeTarget = new THREE.Vector3();
+                oppositeTarget.x = 500 * Math.sin(phi) * Math.cos(oppositeTheta);
+                oppositeTarget.y = 500 * Math.cos(phi);
+                oppositeTarget.z = 500 * Math.sin(phi) * Math.sin(oppositeTheta);
+
+                rightCamera.position.copy(camera.position);
+                rightCamera.lookAt(oppositeTarget);
+                renderer.render(scene, rightCamera);
+            }
+
+            // Update HUD Azimuth & Altitude
+            document.getElementById('hud-azimuth').textContent = lon.toFixed(1) + '°';
+            document.getElementById('hud-altitude').textContent = lat.toFixed(1) + '°';
+            document.getElementById('hud-fov').textContent = Math.round(camera.fov) + '°';
+
+            // Update video seekbar if playing
+            if (videoElement && !videoElement.paused && videoElement.duration) {
+                const percent = (videoElement.currentTime / videoElement.duration) * 100;
+                document.getElementById('video-seekbar').value = percent;
+                updateVideoTimeDisplay();
+            }
+        }
+
+        function resetIdleTimer() {
+            const topHud = document.getElementById('top-hud');
+            const bottomHud = document.getElementById('bottom-hud');
+            const degreeHud = document.getElementById('degree-hud');
+
+            topHud.classList.remove('hud-idle');
+            bottomHud.classList.remove('hud-idle');
+            degreeHud.classList.remove('hud-idle');
+
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                if (!isUserInteracting) {
+                    topHud.classList.add('hud-idle');
+                    bottomHud.classList.add('hud-idle');
+                    degreeHud.classList.add('hud-idle');
+                }
+            }, IDLE_DELAY);
+        }
+
+        // --- STREAMING_CHUNK:Handling Media Loading (Images & 360 Videos) ---
+        function loadMediaIntoViewer(item) {
+            currentActiveId = item.id;
+            document.getElementById('current-media-name').textContent = item.name;
+
+            // Pause any existing video playback
+            if (videoElement) {
+                videoElement.pause();
+                videoElement.src = "";
+                isVideoPlaying = false;
+                document.getElementById('video-play-icon').className = "fa-solid fa-play";
+                document.getElementById('video-controls-bar').classList.add('hidden');
+                document.getElementById('video-controls-bar').classList.remove('flex');
+            }
+
+            if (item.mediaType === 'video') {
+                document.getElementById('video-controls-bar').classList.remove('hidden');
+                document.getElementById('video-controls-bar').classList.add('flex');
+
+                videoElement.src = item.dataUrl;
+                videoElement.load();
+                videoTexture = new THREE.VideoTexture(videoElement);
+                videoTexture.colorSpace = THREE.SRGBColorSpace;
+
+                sphereMesh.material.map = videoTexture;
+                sphereMesh.material.needsUpdate = true;
+
+                videoElement.play().then(() => {
+                    isVideoPlaying = true;
+                    document.getElementById('video-play-icon').className = "fa-solid fa-pause";
+                }).catch(() => {});
+            } else {
+                if (item.type === 'preset' && item.generator) {
+                    const texture = item.generator();
+                    sphereMesh.material.map = texture;
+                    sphereMesh.material.needsUpdate = true;
+                } else if (item.dataUrl) {
+                    const loader = new THREE.TextureLoader();
+                    loader.load(item.dataUrl, (texture) => {
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        sphereMesh.material.map = texture;
+                        sphereMesh.material.needsUpdate = true;
+                    });
+                }
+            }
+            renderGalleryList();
+        }
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function updateVideoTimeDisplay() {
+            if (!videoElement.duration) return;
+            const cur = formatTime(videoElement.currentTime);
+            const dur = formatTime(videoElement.duration);
+            document.getElementById('video-time-display').textContent = `${cur} / ${dur}`;
+        }
+
+        // --- STREAMING_CHUNK:Rendering Gallery Drawer & UI Controls ---
+        function renderGalleryList() {
+            const listElem = document.getElementById('gallery-list');
+            listElem.innerHTML = '';
+
+            document.getElementById('gallery-count-badge').textContent = panoramaLibrary.length;
+
+            panoramaLibrary.forEach((item) => {
+                const isActive = item.id === currentActiveId;
+                const card = document.createElement('div');
+                card.className = `p-3 rounded-xl border transition-all flex items-center justify-between cursor-pointer ${
+                    isActive 
+                        ? 'bg-indigo-950/60 border-indigo-500/60 shadow-lg' 
+                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-800/50'
+                }`;
+
+                card.onclick = () => loadMediaIntoViewer(item);
+
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'flex items-center space-x-3 overflow-hidden';
+                
+                const iconBox = document.createElement('div');
+                iconBox.className = `w-8 h-8 rounded-lg flex items-center justify-center text-xs flex-shrink-0 ${
+                    item.mediaType === 'video' ? 'bg-amber-600/20 text-amber-400' : (item.type === 'preset' ? 'bg-indigo-600/20 text-indigo-400' : 'bg-emerald-600/20 text-emerald-400')
+                }`;
+                iconBox.innerHTML = `<i class="fa-solid ${item.mediaType === 'video' ? 'fa-video' : (item.type === 'preset' ? 'fa-wand-magic-sparkles' : 'fa-image')}"></i>`;
+
+                const textDiv = document.createElement('div');
+                textDiv.className = 'truncate';
+                textDiv.innerHTML = `
+                    <p class="text-xs font-semibold text-white truncate">${item.name}</p>
+                    <p class="text-[10px] text-slate-400 capitalize">${item.mediaType || 'image'} (${item.type})</p>
+                `;
+
+                infoDiv.appendChild(iconBox);
+                infoDiv.appendChild(textDiv);
+                card.appendChild(infoDiv);
+
+                if (item.type === 'user') {
+                    const btnDelete = document.createElement('button');
+                    btnDelete.className = 'text-slate-500 hover:text-rose-400 p-1.5 rounded-lg transition-colors ml-2';
+                    btnDelete.title = 'Remove from storage';
+                    btnDelete.innerHTML = '<i class="fa-solid fa-trash text-xs"></i>';
+                    btnDelete.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteMediaFromDB(item.id);
+                        panoramaLibrary = panoramaLibrary.filter(i => i.id !== item.id);
+                        if (currentActiveId === item.id) {
+                            loadMediaIntoViewer(panoramaLibrary[0]);
+                        } else {
+                            renderGalleryList();
+                        }
+                    };
+                    card.appendChild(btnDelete);
+                }
+
+                listElem.appendChild(card);
+            });
+        }
+
+        function setupUIControls() {
+            // VR Mode Toggle (Opposite Angle VR)
+            const btnVR = document.getElementById('btn-toggle-vr');
+            const vrDivider = document.getElementById('vr-divider');
+            const vrLabel = document.getElementById('vr-label');
+
+            btnVR.addEventListener('click', () => {
+                isVRMode = !isVRMode;
+                if (isVRMode) {
+                    vrDivider.classList.remove('hidden');
+                    vrLabel.textContent = 'Opposite VR View';
+                    btnVR.classList.add('bg-indigo-600', 'text-white');
+                } else {
+                    vrDivider.classList.add('hidden');
+                    vrLabel.textContent = '360° Mono';
+                    btnVR.classList.remove('bg-indigo-600', 'text-white');
+                }
+                onWindowResize();
+            });
+
+            // Mobile Orientation Helper
+            document.getElementById('btn-orientation').addEventListener('click', () => {
+                alert('For optimal 360 VR experience, please rotate your phone to Landscape mode.');
+            });
+
+            // Video Play / Pause Button
+            const btnVideoPlay = document.getElementById('btn-video-play');
+            const videoPlayIcon = document.getElementById('video-play-icon');
+            btnVideoPlay.addEventListener('click', () => {
+                if (videoElement.paused) {
+                    videoElement.play();
+                    videoPlayIcon.className = "fa-solid fa-pause";
+                } else {
+                    videoElement.pause();
+                    videoPlayIcon.className = "fa-solid fa-play";
+                }
+            });
+
+            // Video Seekbar
+            const videoSeekbar = document.getElementById('video-seekbar');
+            videoSeekbar.addEventListener('input', (e) => {
+                if (!videoElement.duration) return;
+                const time = (parseFloat(e.target.value) / 100) * videoElement.duration;
+                videoElement.currentTime = time;
+            });
+
+            // Bulk Upload (Images & Videos)
+            const bulkUploadInput = document.getElementById('bulk-upload');
+            bulkUploadInput.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length === 0) return;
+
+                files.forEach((file, index) => {
+                    const isVid = file.type.startsWith('video/');
+                    const isImg = file.type.startsWith('image/');
+                    if (!isVid && !isImg) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (evt) => {
+                        const newItem = {
+                            id: 'user-' + Date.now() + '-' + index,
+                            name: file.name,
+                            type: 'user',
+                            mediaType: isVid ? 'video' : 'image',
+                            dataUrl: evt.target.result
+                        };
+                        saveMediaToDB(newItem);
+                        panoramaLibrary.push(newItem);
+                        if (index === 0) {
+                            loadMediaIntoViewer(newItem);
+                        } else {
+                            renderGalleryList();
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                });
+            });
+
+            // Drag & Drop Support
+            const dropZone = document.getElementById('drop-zone');
+            window.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('hidden');
+                setTimeout(() => dropZone.classList.remove('opacity-0'), 10);
+            });
+
+            dropZone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('opacity-0');
+                setTimeout(() => dropZone.classList.add('hidden'), 300);
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('opacity-0');
+                setTimeout(() => dropZone.classList.add('hidden'), 300);
+
+                const files = Array.from(e.dataTransfer.files);
+                files.forEach((file, index) => {
+                    const isVid = file.type.startsWith('video/');
+                    const isImg = file.type.startsWith('image/');
+                    if (!isVid && !isImg) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (evt) => {
+                        const newItem = {
+                            id: 'user-' + Date.now() + '-' + index,
+                            name: file.name,
+                            type: 'user',
+                            mediaType: isVid ? 'video' : 'image',
+                            dataUrl: evt.target.result
+                        };
+                        saveMediaToDB(newItem);
+                        panoramaLibrary.push(newItem);
+                        if (index === 0) loadMediaIntoViewer(newItem);
+                        else renderGalleryList();
+                    };
+                    reader.readAsDataURL(file);
+                });
+            });
+
+            // Drawer Toggle
+            const galleryDrawer = document.getElementById('gallery-drawer');
+            document.getElementById('btn-toggle-gallery').addEventListener('click', () => {
+                galleryDrawer.classList.remove('translate-x-full');
+            });
+            document.getElementById('btn-close-gallery').addEventListener('click', () => {
+                galleryDrawer.classList.add('translate-x-full');
+            });
+
+            // Clear Stored Uploads
+            document.getElementById('btn-clear-stored').addEventListener('click', () => {
+                if (confirm('Clear all stored user media from IndexedDB?')) {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    tx.objectStore(STORE_NAME).clear();
+                    panoramaLibrary = panoramaLibrary.filter(i => i.type === 'preset');
+                    loadMediaIntoViewer(panoramaLibrary[0]);
+                }
+            });
+
+            // Clear Canvas
+            document.getElementById('btn-clear-canvas').addEventListener('click', () => {
+                if (videoElement) {
+                    videoElement.pause();
+                    videoElement.src = "";
+                }
+                const blankCanvas = document.createElement('canvas');
+                blankCanvas.width = 1024;
+                blankCanvas.height = 512;
+                const ctx = blankCanvas.getContext('2d');
+                ctx.fillStyle = '#030712';
+                ctx.fillRect(0, 0, 1024, 512);
+
+                sphereMesh.material.map = new THREE.CanvasTexture(blankCanvas);
+                sphereMesh.material.needsUpdate = true;
+                document.getElementById('current-media-name').textContent = 'Canvas Cleared (Empty View)';
+                document.getElementById('video-controls-bar').classList.add('hidden');
+            });
+
+            // Auto-Rotate
+            const btnAutorotate = document.getElementById('btn-autorotate');
+            const autorotateIcon = document.getElementById('autorotate-icon');
+            btnAutorotate.addEventListener('click', () => {
+                autoRotate = !autoRotate;
+                if (autoRotate) {
+                    autorotateIcon.className = "fa-solid fa-pause text-xs text-indigo-400";
+                } else {
+                    autorotateIcon.className = "fa-solid fa-play text-xs";
+                }
+            });
+
+            document.getElementById('speed-slider').addEventListener('input', (e) => {
+                autoRotateSpeed = parseFloat(e.target.value);
+            });
+
+            // Zoom
+            document.getElementById('btn-zoom-in').addEventListener('click', () => {
+                targetFOV = Math.max(25, targetFOV - 10);
+            });
+            document.getElementById('btn-zoom-out').addEventListener('click', () => {
+                targetFOV = Math.min(105, targetFOV + 10);
+            });
+
+            // Reset View
+            document.getElementById('btn-reset-view').addEventListener('click', () => {
+                lon = 0;
+                lat = 0;
+                targetFOV = 75;
+                autoRotate = false;
+                autorotateIcon.className = "fa-solid fa-play text-xs";
+            });
+
+            // Fullscreen
+            document.getElementById('btn-fullscreen').addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                } else {
+                    if (document.exitFullscreen) document.exitFullscreen();
+                }
+            });
+        }
+
+        window.onload = async function() {
+            await initDB();
+            initThreeViewer();
+            setupUIControls();
+            renderGalleryList();
+        };
+    </script>
+</body>
+</html>
